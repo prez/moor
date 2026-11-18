@@ -120,6 +120,10 @@ type Pager struct {
 	// Ref: https://github.com/walles/moor/issues/113
 	QuitIfOneScreen bool
 
+	// Set when the input was too long for one screen. QuitIfOneScreen is
+	// ignored after that, so a reload with shorter contents does not quit.
+	stayingOpen bool
+
 	// Search for this string on startup, ignored if empty
 	InitialSearch string
 
@@ -964,7 +968,7 @@ func (p *Pager) canQuitIfOneScreen(r *reader.ReaderImpl) bool {
 		return false
 	}
 
-	if !p.QuitIfOneScreen || p.isShowingHelp {
+	if !p.QuitIfOneScreen || p.isShowingHelp || p.stayingOpen {
 		return false
 	}
 
@@ -973,7 +977,12 @@ func (p *Pager) canQuitIfOneScreen(r *reader.ReaderImpl) bool {
 	}
 
 	// Counting the lines is the expensive part, so it goes last
-	return p.fitsOnOneScreen()
+	if p.fitsOnOneScreen() {
+		return true
+	}
+
+	p.stayingOpen = true
+	return false
 }
 
 func (p *Pager) fitsOnOneScreen() bool {
