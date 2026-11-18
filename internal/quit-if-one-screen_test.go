@@ -1,10 +1,13 @@
 package internal
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/alecthomas/chroma/v2/formatters"
 	"github.com/walles/moor/v2/internal/reader"
 	"github.com/walles/twin"
 	"gotest.tools/v3/assert"
@@ -124,4 +127,39 @@ func TestQuitIfOneScreenPaintsForAUserWhoAsks(t *testing.T) {
 
 	painted = hasPainted(t, screen, pagingDone)
 	assert.Assert(t, painted, "A user who asks should get the contents, highlighted or not")
+}
+
+// Contents that did not fit kept the pager open, and it must stay open if the
+// file is then replaced by one that does fit.
+//
+// The user is looking at the file at that point. Quitting would take away
+// their pager because of what somebody else did to the file.
+func TestQuitIfOneScreenStaysAfterReloadingIntoOneScreen(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "lines.txt")
+	assert.NilError(t, os.WriteFile(file, []byte(strings.Repeat("long\n", 20)), 0o600))
+
+	r, err := reader.NewFromFilename(file, formatters.TTY16m, reader.ReaderOptions{Style: colorlessChromaStyle})
+	assert.NilError(t, err)
+	assert.NilError(t, r.Wait())
+
+	pager := NewPager(r)
+	pager.ShowLineNumbers = false
+	pager.QuitIfOneScreen = true
+	screen := newPagingLoopScreen(20, 10)
+	pagingDone := startPagingInBackground(t, pager, screen)
+	screen.waitForRow(t, "long")
+
+	assert.NilError(t, os.WriteFile(file, []byte("short\n"), 0o600))
+
+	// The reader notices the change by polling, so this takes a while
+	deadline := time.Now().Add(5 * time.Second)
+	for screen.shownRows()[0] != "short" {
+		select {
+		case <-pagingDone:
+			t.Fatal("Pager quit when the reloaded file fit on one screen")
+		default:
+		}
+		assert.Assert(t, time.Now().Before(deadline), "Reloaded file never showed up")
+		time.Sleep(10 * time.Millisecond)
+	}
 }
